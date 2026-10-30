@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -32,11 +33,7 @@ func InitRedisClient() (err error) {
 		SyncFrequency = 60
 	}
 	SysLog(LogText("Redis is enabled"))
-	opt, err := redis.ParseURL(os.Getenv("REDIS_CONN_STRING"))
-	if err != nil {
-		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
-	}
-	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
+	opt := ParseRedisOption()
 	RDB = redis.NewClient(opt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -58,7 +55,35 @@ func ParseRedisOption() *redis.Options {
 	if err != nil {
 		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
 	}
+	if opt.PoolSize <= 0 {
+		opt.PoolSize = 10 * runtime.GOMAXPROCS(0)
+	}
+	if value, ok := parseRedisPoolEnv("REDIS_POOL_SIZE", false); ok {
+		opt.PoolSize = value
+	}
+	if opt.MinIdleConns < 0 {
+		opt.MinIdleConns = 0
+	}
+	if value, ok := parseRedisPoolEnv("REDIS_MIN_IDLE_CONNS", true); ok {
+		opt.MinIdleConns = value
+	}
+	if opt.MinIdleConns > opt.PoolSize {
+		opt.MinIdleConns = opt.PoolSize
+	}
 	return opt
+}
+
+func parseRedisPoolEnv(name string, allowZero bool) (int, bool) {
+	rawValue := os.Getenv(name)
+	if rawValue == "" {
+		return 0, false
+	}
+	value, err := strconv.Atoi(rawValue)
+	if err != nil || value < 0 || (!allowZero && value == 0) {
+		SysError(LogText("invalid %s value %q; keeping Redis URL/default pool setting", name, rawValue))
+		return 0, false
+	}
+	return value, true
 }
 
 func RedisSet(key string, value string, expiration time.Duration) error {
