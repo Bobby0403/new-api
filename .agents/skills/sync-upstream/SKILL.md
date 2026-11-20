@@ -1,12 +1,12 @@
 ---
 name: sync-upstream
 description: >-
-  Opens a dp-router pull request that merges QuantumNous/new-api main into our
+  Opens a supported fork pull request that merges QuantumNous/new-api main into our
   main by running the sync_upstream.py script. Ledger paths keep our overlapping
   lines. Every other overlapping line follows upstream. Lockfiles and locale
   files are regenerated instead of line-merged. Use when the user invokes
   sync-upstream, or asks to update, pull, or merge upstream new-api into
-  dp-router (更新上游, 合并上游, 同步 QuantumNous/new-api). Also use when they
+  Bobby0403/new-api (更新上游, 合并上游, 同步 QuantumNous/new-api). Also use when they
   ask to record a new focus change in this skill. Do not use for ordinary
   feature work that does not mention upstream sync or this ledger.
 disable-model-invocation: true
@@ -14,17 +14,19 @@ disable-model-invocation: true
 
 # 同步上游 new-api
 
-在 `dp-router` 仓库根目录执行脚本。不要自己拼 `git merge`，不要 `git checkout --ours` 整文件，不要加 `--skip-build`，不要在脚本失败后换一种合并方式再试。脚本使用已经配置好的 git 身份，不会改 git config。
+在 `Bobby0403/new-api` 仓库根目录执行脚本。脚本按 `origin` 识别目标仓库，只接受该仓库的 GitHub SSH/HTTPS 地址（可带 `.git`），不修改 remote。PR 查询和创建必须指向同一个目标仓库；下文的 `<目标仓库>` 使用`Bobby0403/new-api`。不要自己拼 `git merge`，不要 `git checkout --ours` 整文件，不要加 `--skip-build`，不要在脚本失败后换一种合并方式再试。脚本使用已经配置好的 git 身份，不会改 git config。
 
 ```bash
 python3 .agents/skills/sync-upstream/scripts/sync_upstream.py
 ```
 
+台账仅保护当前 Bobby0403/new-api 已有行为：New API 项目名称、任务锁、分布式轮询、任务插件嵌入与站点文件。不要求旧 dp-router 的视频开关、私有插件、Jenkins、品牌及版权开关。验证使用当前仓库存在的回归测试；缺失或失败的有效检查仍须停止。
+
 脚本把规则定死在一处。台账路径见脚本里的 `LEDGER_PREFIXES`。要保住新的长期行为，把路径加进这个元组，并在 `assert_ledger` 里加一条对应检查，同时补测试。
 
 退出码：
 
-- `0`：同步分支上已经有一次合并提交。标准输出有 `BRANCH=` 和 `REPORT=`。只推送这个分支名：`git push -u origin` 后面跟 `BRANCH` 的值。用 `gh pr create --repo deeppatternai/dp-router --base main --head` 这个分支名开 PR。正文贴上 `REPORT` 文件，并写上「请用 merge commit 合并，不要 squash 或 rebase」。不要改仓库设置，不要自己合并 PR。`--ledger-only` 成功时只输出 `BRANCH=`。
+- `0`：同步分支上已经有一次合并提交。标准输出有 `BRANCH=` 和 `REPORT=`。只推送这个分支名：`git push -u origin` 后面跟 `BRANCH` 的值。用 `gh pr create --repo <目标仓库> --base main --head` 这个分支名开 PR。正文贴上 `REPORT` 文件，并写上「请用 merge commit 合并，不要 squash 或 rebase」。不要改仓库设置，不要自己合并 PR。`--ledger-only` 成功时只输出 `BRANCH=`。
 - `2`：`origin/main` 已经包含上游。不要开 PR。
 - `3`：还有脚本不能安全处理的冲突。不要猜，把脚本输出交给用户。不要提交。合并如果已经开始，就留在进行中。
 - `1`：预检、台账或构建失败。不要推送，不要提交。合并如果已经开始，就留在进行中，不要清空已经暂存的结果。
@@ -35,7 +37,7 @@ python3 .agents/skills/sync-upstream/scripts/sync_upstream.py
 python3 .agents/skills/sync-upstream/scripts/sync_upstream.py --ledger-only
 ```
 
-脚本会从 `origin/main` 建 `docs/sync-ledger-日期`，并且只提交 `.agents/skills/sync-upstream/` 里的改动。然后推送它打印的 `BRANCH`，向 `deeppatternai/dp-router` 开 PR。不要把这些改动留在 `main`。
+脚本会从 `origin/main` 建 `docs/sync-ledger-日期`，并且只提交 `.agents/skills/sync-upstream/` 里的改动。然后推送它打印的 `BRANCH`，向 `<目标仓库>` 开 PR。不要把这些改动留在 `main`。
 
 策略只有这一套：
 

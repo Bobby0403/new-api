@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge QuantumNous/new-api main into a dp-router sync branch.
+"""Merge QuantumNous/new-api main into a supported fork sync branch.
 
 One policy, implemented here rather than in prose:
 
@@ -30,9 +30,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ORIGIN_URLS = {
-    "git@github.com:deeppatternai/dp-router.git",
-    "https://github.com/deeppatternai/dp-router.git",
+ORIGIN_REPOS = {
+    f"{prefix}{repo}{suffix}": repo
+    for repo in ("Bobby0403/new-api",)
+    for prefix in ("git@github.com:", "https://github.com/")
+    for suffix in ("", ".git")
 }
 UPSTREAM_URLS = {
     "https://github.com/QuantumNous/new-api.git",
@@ -53,17 +55,14 @@ LEDGER_PREFIXES = (
     "docs/site",
     "electron/package.json",
     "main.go",
-    "middleware/openai_video_api.go",
     "middleware/task_plugin.go",
     "model/option.go",
     "plugins/embed.go",
-    "plugins/other",
     "router/task-plugin-protocol-router.go",
     "service/distlock.go",
     "service/distributed_poll.go",
     "service/system_task.go",
     "service/task_polling.go",
-    "web/Jenkinsfile",
     "web/src/components/layout/components/footer.tsx",
     "web/src/features/home/components/sections/hero.tsx",
     "web/src/features/system-settings",
@@ -792,64 +791,27 @@ def load_report(root: Path, resume: bool) -> list[str]:
 
 
 def assert_ledger(root: Path) -> None:
-    checks: list[tuple[str, Path, str | None, str | None]] = [
-        ("video default is false", root / "middleware/openai_video_api.go", r"GetEnvOrDefaultBool\(OpenAIVideoAPIEnabledEnv, false\)", None),
-        ("video routes stay gated", root / "router/task-plugin-protocol-router.go", r"RestrictOpenAIVideoAPI", None),
-        ("video endpoint template", root / "common/endpoint_defaults.go", r"EndpointTypeOpenAIVideo", None),
-        ("job lock prefix", root / "service/distlock.go", r"dp:lock:job:", None),
-        ("poll lock prefix", root / "service/distlock.go", r"dp:lock:poll:", None),
-        ("channel balance uses the lock", root / "controller/channel-billing.go", r"RunExclusiveJob", None),
-        ("brand name", root / "common/constants.go", r'SystemName = "DeepPattern API"', None),
-        ("copyright defaults off", root / "common/constants.go", r"FooterCopyrightEnabled = false", None),
-        ("status exposes copyright", root / "controller/misc.go", r"footer_copyright_enabled", None),
-        ("hero docs switch", root / "web/src/features/home/components/sections/hero.tsx", r"docsEnabled", None),
-        ("private plugins stay out of the factory", root / "plugins/embed.go", None, r"plugins/other"),
-        ("image does not copy NOTICE", root / "Dockerfile", None, r"NOTICE"),
-        ("dev image does not copy NOTICE", root / "Dockerfile.dev", None, r"NOTICE"),
+    # These invariants belong to Bobby0403/new-api, not the old dp-router fork.
+    checks = [
+        ("project name", "common/constants.go", r'SystemName = "New API"'),
+        ("job lock prefix", "service/distlock.go", r"dp:lock:job:"),
+        ("poll lock prefix", "service/distlock.go", r"dp:lock:poll:"),
+        ("channel balance uses the lock", "controller/channel-billing.go", r"RunExclusiveJob"),
+        ("distributed poll is registered", "main.go", r"RegisterDistributedPoll"),
+        ("poll registration exists", "service/distributed_poll.go", r"func RegisterDistributedPoll"),
+        ("system task runner exists", "service/system_task.go", r"func StartSystemTaskRunner"),
+        ("task polling entry exists", "service/task_polling.go", r"func RunTaskPollingOnce"),
+        ("factory embeds task plugins", "plugins/embed.go", r"//go:embed tasks"),
     ]
-    for label, path, required, forbidden in checks:
+    for label, relative, required in checks:
+        path = root / relative
         if not path.is_file():
             raise Stop(1, f"ledger file missing: {label}: {path}")
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if required and re.search(required, text) is None:
+        if re.search(required, path.read_text(encoding="utf-8")) is None:
             raise Stop(1, f"ledger check failed: {label}")
-        if forbidden and re.search(forbidden, text):
-            raise Stop(1, f"ledger check found forbidden text: {label}")
     for prefix in LEDGER_PREFIXES:
         if not (root / prefix).exists():
             raise Stop(1, f"ledger path missing: {prefix}")
-    extra_checks = [
-        ("video flag documented", root / ".env.example", r"OPENAI_VIDEO_API_ENABLED=false", None),
-        ("desktop brand", root / "electron/package.json", r"DeepPattern API", None),
-        ("distributed poll is registered", root / "main.go", r"RegisterDistributedPoll", None),
-        ("video generations stays off the public videos route", root / "middleware/task_plugin.go", r"/v1/video/generations", None),
-        ("copyright option is stored", root / "model/option.go", r"FooterCopyrightEnabled", None),
-        ("poll registration exists", root / "service/distributed_poll.go", r"func RegisterDistributedPoll", None),
-        ("system task runner exists", root / "service/system_task.go", r"func StartSystemTaskRunner", None),
-        ("task polling entry exists", root / "service/task_polling.go", r"func RunTaskPollingOnce", None),
-        ("footer hides copyright unless enabled", root / "web/src/components/layout/components/footer.tsx", r"footerCopyrightEnabled !== true", None),
-        ("settings default copyright off", root / "web/src/features/system-settings/site/index.tsx", r"FooterCopyrightEnabled: false", None),
-        ("status reads the copyright flag", root / "web/src/lib/status-query.ts", r"footer_copyright_enabled", None),
-    ]
-    for label, path, required, forbidden in extra_checks:
-        if not path.is_file():
-            raise Stop(1, f"ledger file missing: {label}: {path}")
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if required and re.search(required, text) is None:
-            raise Stop(1, f"ledger check failed: {label}")
-        if forbidden and re.search(forbidden, text):
-            raise Stop(1, f"ledger check found forbidden text: {label}")
-    for rel in ("plugins/other/alibaba/plugin.js", "plugins/other/muleroute/plugin.js", "web/Jenkinsfile"):
-        if not (root / rel).is_file():
-            raise Stop(1, f"ledger file missing: {rel}")
-    if not (root / "docs/site").is_dir():
-        raise Stop(1, "ledger directory missing: docs/site")
-    ignore = (root / ".gitignore").read_text(encoding="utf-8", errors="replace").splitlines()
-    if ".aqg" not in ignore:
-        raise Stop(1, "ledger check failed: .gitignore must contain a .aqg line")
-    gated = (root / "router/task-plugin-protocol-router.go").read_text(encoding="utf-8", errors="replace")
-    if gated.count("RestrictOpenAIVideoAPI") < 3:
-        raise Stop(1, "ledger check failed: OpenAI video routes are not all gated")
 
 
 def _run_checked(root: Path, command: list[str], cwd: Path | None = None) -> str:
@@ -867,13 +829,13 @@ def run_verification(root: Path) -> None:
                 "TestDistLockSingleOwnerRenewAndRelease",
                 "TestRunExclusiveJobSkipsWhilePeerHoldsLock",
                 "TestBackgroundJobsEnabledUsesRedisBeforeMasterFlag",
+                "TestUnfinishedTaskQueriesHonorShard",
             ],
-            ["go", "test", "./service/", "-count=1", "-v", "-run", "^(TestDistLockSingleOwnerRenewAndRelease|TestRunExclusiveJobSkipsWhilePeerHoldsLock|TestBackgroundJobsEnabledUsesRedisBeforeMasterFlag)$"],
+            ["go", "test", "./service/", "-count=1", "-v", "-run", "^(TestDistLockSingleOwnerRenewAndRelease|TestRunExclusiveJobSkipsWhilePeerHoldsLock|TestBackgroundJobsEnabledUsesRedisBeforeMasterFlag|TestUnfinishedTaskQueriesHonorShard)$"],
         ),
-        (["TestOpenAIVideoAPIRejectsCallsWhenDisabled"], ["go", "test", "./router/", "-count=1", "-v", "-run", "^TestOpenAIVideoAPIRejectsCallsWhenDisabled$"]),
         (
-            ["TestVideoGenerationsIsNotClaimedByOpenAIVideoProtocol", "TestVideoGenerationsClaimsOpenAIVideoModel"],
-            ["go", "test", "./middleware/", "-count=1", "-v", "-run", "^TestVideoGenerations(IsNotClaimedByOpenAIVideoProtocol|ClaimsOpenAIVideoModel)$"],
+            ["TestVideoGenerationsIsNotClaimedByOpenAIVideoProtocol"],
+            ["go", "test", "./middleware/", "-count=1", "-v", "-run", "^TestVideoGenerationsIsNotClaimedByOpenAIVideoProtocol$"],
         ),
         ([], ["go", "build", "./..."]),
     ]
@@ -1115,6 +1077,14 @@ def commit_merge(root: Path) -> None:
         raise Stop(1, "merge commit parents are not our branch and upstream/main")
 
 
+def origin_repo(root: Path) -> str:
+    origin = git(root, "remote", "get-url", "origin").stdout.strip()
+    repo = ORIGIN_REPOS.get(origin)
+    if repo is None:
+        raise Stop(1, f"unsupported origin: {origin}")
+    return repo
+
+
 def preflight(root: Path) -> None:
     if git(root, "status", "--porcelain").stdout.strip():
         raise Stop(1, "worktree is dirty")
@@ -1129,9 +1099,7 @@ def preflight(root: Path) -> None:
             candidate = root / candidate
         if candidate.exists():
             raise Stop(1, f"{name} is in progress")
-    origin = git(root, "remote", "get-url", "origin").stdout.strip()
-    if origin not in ORIGIN_URLS:
-        raise Stop(1, f"origin is {origin}")
+    repo = origin_repo(root)
     upstream = git(root, "remote", "get-url", "upstream", check=False)
     if upstream.returncode != 0:
         git(root, "remote", "add", "upstream", UPSTREAM_FETCH)
@@ -1146,7 +1114,7 @@ def preflight(root: Path) -> None:
         if ahead != "0":
             raise Stop(1, "local main has commits that are not on origin/main")
     listed = subprocess.run(
-        ["gh", "pr", "list", "--repo", "deeppatternai/dp-router", "--state", "open", "--limit", "200", "--json", "headRefName"],
+        ["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "headRefName"],
         text=True,
         capture_output=True,
     )
