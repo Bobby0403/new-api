@@ -1,12 +1,49 @@
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import sync_upstream as sync
 
 
 class PolicyTests(unittest.TestCase):
+    def test_origin_repo_selects_supported_fork_and_rejects_other_remotes(self) -> None:
+        for repo in ("Bobby0403/new-api",):
+            for prefix in ("git@github.com:", "https://github.com/"):
+                for suffix in ("", ".git"):
+                    url = f"{prefix}{repo}{suffix}"
+                    with self.subTest(url=url), patch.object(sync, "git") as git:
+                        git.return_value.stdout = url + "\n"
+                        self.assertEqual(sync.origin_repo(Path(".")), repo)
+        for url in ("https://github.com/deeppatternai/dp-router.git",
+                    "https://github.com/QuantumNous/new-api.git",
+                    "https://github.com/other/new-api.git",
+                    "https://github.com/Bobby0403/new-api.git/extra"):
+            with self.subTest(url=url), patch.object(sync, "git") as git:
+                git.return_value.stdout = url
+                with self.assertRaises(sync.Stop) as stopped:
+                    sync.origin_repo(Path("."))
+                self.assertEqual(stopped.exception.code, 1)
+
+    def test_fork_ledger_requires_existing_polling_and_project_identity(self) -> None:
+        source = Path(__file__).resolve().parents[4]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for prefix in sync.LEDGER_PREFIXES:
+                origin = source / prefix
+                target = root / prefix
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if origin.is_dir():
+                    shutil.copytree(origin, target)
+                else:
+                    shutil.copyfile(origin, target)
+            sync.assert_ledger(root)
+            (root / "main.go").write_text("package main\n")
+            with self.assertRaises(sync.Stop):
+                sync.assert_ledger(root)
+
     def test_status_record_keeps_spaces_and_skips_renames(self) -> None:
         blob = b"UU my file.txt\0R  b file.txt\0a.txt\0M  clean.go\0"
         self.assertEqual(sync.parse_status_z(blob), [("UU", "my file.txt")])
