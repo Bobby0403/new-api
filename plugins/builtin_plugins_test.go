@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "sora", "sunoapi", "vertex-ai", "vidu", "xai"}
+var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kie", "kling", "sora", "sunoapi", "vertex-ai", "vidu", "xai"}
 
 // The built-in request processing plugins and the stage hooks each exports.
 var requestPluginHooks = map[string][]string{
@@ -51,6 +51,10 @@ func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing
 		{"POST", "/api/common/v3/submit_task_v2", "jimeng", jsplugin.RouteTypeSubmit, "", "taskSubmitted", false, false},
 		{"POST", "/api/common/v3/get_result_v2", "jimeng", jsplugin.RouteTypeDynamic, "", "taskResult", false, false},
 		{"POST", "/jimeng/api/common/v3/submit_task_v2", "jimeng", jsplugin.RouteTypeSubmit, "", "taskSubmitted", true, false},
+		{"POST", "/api/v1/jobs/createTask", "kie", jsplugin.RouteTypeSubmit, "", "taskCreated", false, false},
+		{"POST", "/kie/api/v1/jobs/createTask", "kie", jsplugin.RouteTypeSubmit, "", "taskCreated", true, false},
+		{"GET", "/api/v1/jobs/recordInfo", "kie", jsplugin.RouteTypeQuery, "", "taskStatus", false, false},
+		{"GET", "/kie/api/v1/jobs/recordInfo", "kie", jsplugin.RouteTypeQuery, "", "taskStatus", true, false},
 		{"POST", "/suno/submit/:action", "sunoapi", jsplugin.RouteTypeSubmit, "", "renderSubmit", false, true},
 		{"POST", "/suno/fetch", "sunoapi", jsplugin.RouteTypeDynamic, "", "renderTasks", false, true},
 		{"GET", "/suno/fetch/:task_id", "sunoapi", jsplugin.RouteTypeQuery, "", "renderTask", false, true},
