@@ -3,6 +3,8 @@ module github.com/QuantumNous/new-api
 // +heroku goVersion go1.26.10
 go 1.26.10
 
+replace github.com/QuantumNous/new-api/pluginkit => ./pluginkit
+
 replace github.com/QuantumNous/new-api/relaykit => ./relaykit
 
 replace github.com/QuantumNous/new-api/tokenkit => ./tokenkit
@@ -11,9 +13,10 @@ require (
 	github.com/Azure/go-ntlmssp v0.1.1
 	github.com/Calcium-Ion/go-epay v0.0.6
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
-	github.com/MoeForge/moego v0.1.0-alpha.4
+	github.com/MoeForge/moego v0.1.0-alpha.5
 	github.com/MoeForge/moejs v0.1.0
-	github.com/QuantumNous/new-api/relaykit v0.0.0
+	github.com/QuantumNous/new-api/pluginkit v0.0.0
+	github.com/QuantumNous/new-api/relaykit v0.3.8
 	github.com/QuantumNous/new-api/tokenkit v0.0.0
 	github.com/abema/go-mp4 v1.4.1
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -49,7 +52,6 @@ require (
 	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/jinzhu/copier v0.4.0
 	github.com/joho/godotenv v1.5.1
-	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/compress v1.18.7
 	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/mewkiz/flac v1.0.13
@@ -124,6 +126,7 @@ require (
 	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -154,8 +157,8 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	go.opentelemetry.io/otel v1.41.0 // indirect
-	go.opentelemetry.io/otel/trace v1.41.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect

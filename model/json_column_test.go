@@ -191,6 +191,19 @@ func TestJSONColumnDatabaseRoundTrip(t *testing.T) {
 					assert.False(t, *decoded.Enabled)
 				})
 			}
+			for _, discarded := range []bool{false, true} {
+				original := row{PrivateData: TaskPrivateData{ResultURL: "https://example.test/result.png", ResultDiscarded: discarded}}
+				require.NoError(t, table.Create(&original).Error)
+				var loaded row
+				require.NoError(t, table.First(&loaded, original.ID).Error)
+				assert.Equal(t, discarded, loaded.PrivateData.ResultDiscarded)
+				if discarded {
+					assert.Empty(t, loaded.PrivateData.ResultURL)
+				} else {
+					assert.Equal(t, original.PrivateData.ResultURL, loaded.PrivateData.ResultURL)
+				}
+				assert.Equal(t, "https://example.test/result.png", original.PrivateData.ResultURL, "persistence must preserve the in-memory result")
+			}
 			require.NoError(t, table.Create(&row{Name: "empty"}).Error)
 			var empty row
 			require.NoError(t, table.Where(map[string]any{
