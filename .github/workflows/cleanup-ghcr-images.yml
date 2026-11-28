@@ -1,0 +1,113 @@
+name: Cleanup Old GHCR Images
+
+on:
+  schedule:
+    # 每周一 03:00 (UTC+8) 自动清理一次
+    - cron: "0 19 * * 0"
+  workflow_dispatch:
+    inputs:
+      keep_count:
+        description: "保留最近多少个历史版本镜像（latest 与 v* 发布标签永久保留）"
+        required: false
+        default: "5"
+        type: string
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Prune old new-api versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE_NAME: new-api
+          KEEP_COUNT: ${{ inputs.keep_count || '5' }}
+        run: |
+          node <<'EOF'
+          const token = process.env.GH_TOKEN;
+          const owner = process.env.OWNER;
+          const pkg = encodeURIComponent(process.env.PACKAGE_NAME);
+          const keepCount = Math.max(1, Number.parseInt(process.env.KEEP_COUNT || "5", 10) || 5);
+          const untaggedMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
+          const headers = {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          };
+
+          async function fetchAllVersions(prefix) {
+            const items = [];
+            for (let page = 1; page <= 20; page++) {
+              const url = `https://api.github.com/${prefix}/${owner}/packages/container/${pkg}/versions?per_page=100&page=${page}`;
+              const res = await fetch(url, { headers });
+              if (res.status === 404) return null;
+              if (!res.ok) throw new Error(`List versions failed (${res.status}): ${await res.text()}`);
+              const batch = await res.json();
+              if (!Array.isArray(batch) || batch.length === 0) break;
+              items.push(...batch);
+              if (batch.length < 100) break;
+            }
+            return items;
+          }
+
+          async function main() {
+            let prefix = "users";
+            let versions = await fetchAllVersions("users");
+            if (versions === null) {
+              prefix = "orgs";
+              versions = await fetchAllVersions("orgs");
+            }
+            if (!versions || versions.length === 0) {
+              console.log("No package versions found, nothing to clean.");
+              return;
+            }
+
+            versions.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
+
+            const now = Date.now();
+            let keptTagged = 0;
+            let deleted = 0;
+
+            for (const ver of versions) {
+              const tags = ver.metadata?.container?.tags || [];
+              const isProtected = tags.some((t) => t === "latest" || /^v\d/.test(t));
+
+              if (tags.length > 0) {
+                if (isProtected) {
+                  console.log(`KEEP (protected): id=${ver.id} tags=${JSON.stringify(tags)}`);
+                  continue;
+                }
+                keptTagged += 1;
+                if (keptTagged <= keepCount) {
+                  console.log(`KEEP (recent ${keptTagged}/${keepCount}): id=${ver.id} tags=${JSON.stringify(tags)}`);
+                  continue;
+                }
+              } else {
+                const ageMs = now - new Date(ver.updated_at || ver.created_at).getTime();
+                if (ageMs < untaggedMaxAgeMs) {
+                  console.log(`KEEP (untagged < 7d): id=${ver.id}`);
+                  continue;
+                }
+              }
+
+              const delUrl = `https://api.github.com/${prefix}/${owner}/packages/container/${pkg}/versions/${ver.id}`;
+              const delRes = await fetch(delUrl, { method: "DELETE", headers });
+              if (!delRes.ok) {
+                console.warn(`WARN delete failed (${delRes.status}) id=${ver.id}: ${await delRes.text()}`);
+                continue;
+              }
+              deleted += 1;
+              console.log(`DELETED: id=${ver.id} tags=${JSON.stringify(tags)}`);
+            }
+
+            console.log(`Cleanup complete. Total versions scanned: ${versions.length}, deleted: ${deleted}.`);
+          }
+
+          main().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          EOF

@@ -1,0 +1,91 @@
+name: Build & Push New API (GHCR)
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - ".github/workflows/cleanup-ghcr-images.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "可选自定义镜像标签（例如 v0.12.0）"
+        required: false
+        type: string
+      publish_latest:
+        description: "同时更新 latest 标签"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: build-new-api-ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute image tags & write VERSION
+        id: meta
+        shell: bash
+        run: |
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER_LOWER}/new-api"
+          SHORT_SHA="${GITHUB_SHA::9}"
+          TAGS="${IMAGE}:sha-${SHORT_SHA}"
+          APP_VERSION="main-${SHORT_SHA}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.publish_latest }}" = "true" ]; then
+              TAGS="${TAGS},${IMAGE}:latest"
+            fi
+            CUSTOM_TAG=$(echo "${{ inputs.tag }}" | tr -d '[:space:]')
+            if [ -n "${CUSTOM_TAG}" ]; then
+              TAGS="${TAGS},${IMAGE}:${CUSTOM_TAG}"
+              APP_VERSION="${CUSTOM_TAG}"
+            fi
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+
+          echo "${APP_VERSION}" > VERSION
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.description=Enjoyser New API Gateway
+          cache-from: type=gha,scope=new-api
+          cache-to: type=gha,scope=new-api,mode=max
