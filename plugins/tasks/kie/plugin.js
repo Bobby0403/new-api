@@ -650,7 +650,16 @@ const MODELS = {
 
 // Image models keep one identity across generations and edits.
 // The canonical request records the operation; driver hooks never inspect paths.
+// Official identities are independent of the provider's operation-specific IDs.
+// BFL model IDs: https://docs.bfl.ai/quick_start/generating_images
 const IMAGE_FAMILIES = {
+  "flux-2-pro": { generate: "flux-2/pro-text-to-image", edit: "flux-2/pro-image-to-image", keepVendorAliases: true },
+  "flux-2-flex": { generate: "flux-2/flex-text-to-image", edit: "flux-2/flex-image-to-image", keepVendorAliases: true },
+  "gemini-2.5-flash-image": { generate: "google/nano-banana", edit: "google/nano-banana-edit" },
+  "gemini-3-pro-image": { generate: "nano-banana-pro", edit: "nano-banana-pro" },
+  "gemini-3.1-flash-image": { generate: "nano-banana-2", edit: "nano-banana-2" },
+  "gemini-nano-banana-2.1": { generate: "nano-banana-2-1", edit: "nano-banana-2-1" },
+  "gemini-3.1-flash-lite-image": { generate: "nano-banana-2-lite", edit: "nano-banana-2-lite" },
   "google/nano-banana": { generate: "google/nano-banana", edit: "google/nano-banana-edit" },
   "gpt-image-1.5": { generate: "gpt-image/1.5-text-to-image", edit: "gpt-image/1.5-image-to-image" },
   "gpt-image-2": { generate: "gpt-image-2-text-to-image", edit: "gpt-image-2-image-to-image" },
@@ -661,16 +670,38 @@ const IMAGE_FAMILIES = {
   "gpt-image-2.6-economy": { generate: "gpt-image-2-6/economy-text-to-image", edit: "gpt-image-2-6/economy-image-to-image" },
 };
 const LEGACY_IMAGE_MODELS = {};
+// Shared generation/edit vendor IDs stay accepted as legacy channel aliases.
 for (const model of Object.keys(IMAGE_FAMILIES)) {
+  if (IMAGE_FAMILIES[model].keepVendorAliases || IMAGE_FAMILIES[model].generate === IMAGE_FAMILIES[model].edit) continue;
   for (const operation of ["generate", "edit"]) {
     LEGACY_IMAGE_MODELS[IMAGE_FAMILIES[model][operation]] = { model: model, operation: operation };
   }
 }
+// These models have one vendor operation per official ID. Keep old channel
+// names available; changing an identity must not silently change its price.
+// https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/imagen/4-0-generate
+// https://www.alibabacloud.com/help/en/model-studio/text-to-video-guide
+const MODEL_ALIASES = {
+  "imagen-4.0-generate-001": "google/imagen4",
+  "imagen-4.0-fast-generate-001": "google/imagen4-fast",
+  "imagen-4.0-ultra-generate-001": "google/imagen4-ultra",
+  "wan2.6-t2v": "wan/2-6-text-to-video",
+  "wan2.6-i2v": "wan/2-6-image-to-video",
+  "wan2.5-t2v-preview": "wan/2-5-text-to-video",
+  "wan2.5-i2v-preview": "wan/2-5-image-to-video",
+};
+// Kling exposes one model identity for both text-to-video and image-to-video.
+// https://kling.ai/document-api/api/video/2-5-turbo/image-to-video/legacy
+const VIDEO_FAMILIES = {
+  "kling-v2-1-master": { text_to_video: "kling/v2-1-master-text-to-video", image_to_video: "kling/v2-1-master-image-to-video" },
+  "kling-v2-6": { text_to_video: "kling-2.6/text-to-video", image_to_video: "kling-2.6/image-to-video" },
+  "kling-v2-5-turbo": { text_to_video: "kling/v2-5-turbo-text-to-video-pro", image_to_video: "kling/v2-5-turbo-image-to-video-pro" },
+};
 const MODEL_NAMES = Object.keys(MODELS)
   .filter(function (model) {
     return !Object.hasOwn(LEGACY_IMAGE_MODELS, model);
   })
-  .concat(Object.keys(IMAGE_FAMILIES));
+  .concat(Object.keys(IMAGE_FAMILIES), Object.keys(MODEL_ALIASES), Object.keys(VIDEO_FAMILIES));
 
 const IMAGE_COUNT = {
   type: "number",
@@ -737,8 +768,8 @@ export const meta = {
     },
     {
       name: "openai_video",
-      models: Object.keys(MODELS).filter(function (model) {
-        return MODELS[model].type === "video";
+      models: MODEL_NAMES.filter(function (model) {
+        return modelSpec({ model: model }).type === "video";
       }),
     },
   ],
@@ -754,6 +785,14 @@ function text(value) {
 
 function vendorModel(ctx) {
   const model = text(ctx.upstreamModel || ctx.model);
+  if (Object.hasOwn(MODEL_ALIASES, model)) return MODEL_ALIASES[model];
+  if (Object.hasOwn(VIDEO_FAMILIES, model)) {
+    const request = ctx.requestBody || {};
+    const input = request.input || {};
+    const operation = request.operation || (input.image_url || input.image_urls ? "image_to_video" : "text_to_video");
+    if (operation !== "text_to_video" && operation !== "image_to_video") throw new Error("Unsupported video operation");
+    return VIDEO_FAMILIES[model][operation];
+  }
   if (!Object.hasOwn(IMAGE_FAMILIES, model)) return model;
   const operation = (ctx.requestBody || {}).operation || "generate";
   if (operation !== "generate" && operation !== "edit") throw new Error("Unsupported image operation");
@@ -913,7 +952,7 @@ function submitIntent(ctx, body, operation) {
     operation = object(body.input) && body.input[imageField] !== undefined ? "edit" : "generate";
   }
   const requestBody = { model: model, input: body.input };
-  if (unified) requestBody.operation = operation;
+  if (unified || Object.hasOwn(VIDEO_FAMILIES, text(ctx.upstreamModel || model))) requestBody.operation = operation;
   const spec = modelSpec({ model: model, upstreamModel: ctx.upstreamModel, requestBody: requestBody });
   const input = normalizeInput(spec, body.input);
   requestBody.input = input;
@@ -1107,6 +1146,9 @@ function protocolIntent(ctx, protocol) {
       operation = images.length || input[imageField] !== undefined || req[imageField] !== undefined ? "edit" : "generate";
     }
     if (operation !== "generate" && operation !== "edit") throw new Error("Unsupported image operation");
+  }
+  if (Object.hasOwn(VIDEO_FAMILIES, text(ctx.upstreamModel || model))) {
+    operation = images.length || input.image_url || input.image_urls || req.image_url || req.image_urls ? "image_to_video" : "text_to_video";
   }
   const spec = modelSpec({ model: model, upstreamModel: ctx.upstreamModel, requestBody: { operation: operation } });
   if ((protocol === "image" && spec.type !== "image") || (protocol === "video" && spec.type !== "video"))

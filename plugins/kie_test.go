@@ -533,3 +533,143 @@ func TestKieUnifiedImagesThroughGatewayAndAlias(t *testing.T) {
 		assert.Equal(t, want, decoded["requestBody"].(map[string]any)["operation"])
 	}
 }
+
+func TestKieOfficialGoogleImageModelNames(t *testing.T) {
+	plugin := newKiePlugin(t)
+	for _, tc := range []struct{ official, generate, edit string }{
+		{"gemini-2.5-flash-image", "google/nano-banana", "google/nano-banana-edit"},
+		{"gemini-3-pro-image", "nano-banana-pro", "nano-banana-pro"},
+		{"gemini-3.1-flash-image", "nano-banana-2", "nano-banana-2"},
+		{"gemini-nano-banana-2.1", "nano-banana-2-1", "nano-banana-2-1"},
+		{"gemini-3.1-flash-lite-image", "nano-banana-2-lite", "nano-banana-2-lite"},
+	} {
+		t.Run(tc.official, func(t *testing.T) {
+			assert.Contains(t, plugin.Meta.Models, tc.official)
+			for _, operation := range []string{"generate", "edit"} {
+				body := map[string]any{"prompt": "a blue teapot"}
+				if operation == "edit" {
+					body["image"] = "https://cdn.example/source.png"
+				}
+				intent := callKie(t, plugin, "protocols", []string{"openai_image", "decodeRequest"}, map[string]any{"model": tc.official, "operation": operation, "body": map[string]any{"kind": "json", "value": body}})
+				assert.Equal(t, tc.official, intent["model"])
+				ctx := map[string]any{"model": tc.official, "requestBody": intent["requestBody"], "baseUrl": "https://api.kie.example", "apiKey": "key"}
+				wire := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				want := tc.generate
+				if operation == "edit" {
+					want = tc.edit
+				}
+				assert.Equal(t, want, wire["body"].(map[string]any)["model"])
+				facts := callKie(t, plugin, "extractUsage", nil, ctx)
+				assert.Equal(t, float64(1), facts["image_count"])
+				ctx["upstream"] = map[string]any{"kind": "new_api"}
+				forwarded := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				assert.Equal(t, tc.official, forwarded["body"].(map[string]any)["model"])
+				if operation == "edit" {
+					_, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_image", "decodeRequest"}, map[string]any{"model": tc.official, "operation": operation, "body": map[string]any{"kind": "json", "value": map[string]any{"prompt": "p"}}})
+					require.Error(t, err)
+				}
+			}
+		})
+	}
+}
+
+func TestKieOfficialAliasesPreserveVendorRequestsAndUsage(t *testing.T) {
+	plugin := newKiePlugin(t)
+	for _, tc := range []struct {
+		official, generate, edit, protocol string
+		body                               map[string]any
+	}{
+		{"flux-2-pro", "flux-2/pro-text-to-image", "flux-2/pro-image-to-image", "openai_image", map[string]any{"prompt": "p", "aspect_ratio": "1:1", "resolution": "1K"}},
+		{"flux-2-flex", "flux-2/flex-text-to-image", "flux-2/flex-image-to-image", "openai_image", map[string]any{"prompt": "p", "aspect_ratio": "1:1", "resolution": "1K"}},
+		{"imagen-4.0-generate-001", "google/imagen4", "", "openai_image", map[string]any{"prompt": "p", "aspect_ratio": "1:1"}},
+		{"imagen-4.0-fast-generate-001", "google/imagen4-fast", "", "openai_image", map[string]any{"prompt": "p", "aspect_ratio": "1:1"}},
+		{"imagen-4.0-ultra-generate-001", "google/imagen4-ultra", "", "openai_image", map[string]any{"prompt": "p", "aspect_ratio": "1:1"}},
+		{"wan2.6-t2v", "wan/2-6-text-to-video", "", "openai_video", map[string]any{"prompt": "p", "seconds": 5}},
+		{"wan2.6-i2v", "wan/2-6-image-to-video", "", "openai_video", map[string]any{"prompt": "p", "seconds": 5, "image": "https://cdn.example/source.png"}},
+		{"wan2.5-t2v-preview", "wan/2-5-text-to-video", "", "openai_video", map[string]any{"prompt": "p", "seconds": 5, "resolution": "720p"}},
+		{"wan2.5-i2v-preview", "wan/2-5-image-to-video", "", "openai_video", map[string]any{"prompt": "p", "seconds": 5, "resolution": "720p", "image": "https://cdn.example/source.png"}},
+	} {
+		t.Run(tc.official, func(t *testing.T) {
+			assert.Contains(t, plugin.Meta.Models, tc.official)
+			assert.Contains(t, plugin.Meta.Models, tc.generate, "existing channel aliases must remain available")
+			operations := []string{"generate"}
+			if tc.edit != "" {
+				operations = append(operations, "edit")
+			}
+			for _, operation := range operations {
+				body := map[string]any{}
+				for k, v := range tc.body {
+					body[k] = v
+				}
+				vendor := tc.generate
+				if operation == "edit" {
+					body["image"] = "https://cdn.example/source.png"
+					vendor = tc.edit
+				}
+				intent := callKie(t, plugin, "protocols", []string{tc.protocol, "decodeRequest"}, map[string]any{"model": tc.official, "operation": operation, "body": map[string]any{"kind": "json", "value": body}})
+				ctx := map[string]any{"model": tc.official, "requestBody": intent["requestBody"], "baseUrl": "https://api.kie.example", "apiKey": "key"}
+				wire := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				assert.Equal(t, vendor, wire["body"].(map[string]any)["model"])
+				facts := callKie(t, plugin, "extractUsage", nil, ctx)
+				field, want := "image_count", float64(1)
+				if tc.protocol == "openai_video" {
+					field, want = "seconds", float64(5)
+				}
+				assert.Equal(t, want, facts[field])
+				schema, _ := plugin.Meta.UsageForModel(tc.official)
+				require.NotEmpty(t, schema)
+				assert.Contains(t, schema, field)
+				legacy := callKie(t, plugin, "protocols", []string{tc.protocol, "decodeRequest"}, map[string]any{"model": vendor, "operation": operation, "body": map[string]any{"kind": "json", "value": body}})
+				legacyCtx := map[string]any{"model": vendor, "requestBody": legacy["requestBody"], "baseUrl": "https://api.kie.example", "apiKey": "key"}
+				legacyWire := callKie(t, plugin, "buildSubmitRequest", nil, legacyCtx)
+				assert.Equal(t, wire["body"], legacyWire["body"])
+				assert.Equal(t, facts, callKie(t, plugin, "extractUsage", nil, legacyCtx))
+				ctx["upstream"] = map[string]any{"kind": "new_api"}
+				forwarded := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				assert.Equal(t, tc.official, forwarded["body"].(map[string]any)["model"])
+			}
+			if tc.protocol == "openai_image" && tc.edit == "" {
+				_, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{tc.protocol, "decodeRequest"}, map[string]any{"model": tc.official, "operation": "edit", "body": map[string]any{"kind": "json", "value": map[string]any{"prompt": "p", "image": "https://cdn.example/source.png"}}})
+				require.Error(t, err, "Imagen aliases must remain text-only")
+			}
+		})
+	}
+}
+
+func TestKieOfficialKlingModelsChooseVideoOperation(t *testing.T) {
+	plugin := newKiePlugin(t)
+	for _, tc := range []struct{ model, text, image string }{
+		{"kling-v2-1-master", "kling/v2-1-master-text-to-video", "kling/v2-1-master-image-to-video"},
+		{"kling-v2-6", "kling-2.6/text-to-video", "kling-2.6/image-to-video"},
+		{"kling-v2-5-turbo", "kling/v2-5-turbo-text-to-video-pro", "kling/v2-5-turbo-image-to-video-pro"},
+	} {
+		for _, imageInput := range []bool{false, true} {
+			t.Run(tc.model+map[bool]string{false: "/text", true: "/image"}[imageInput], func(t *testing.T) {
+				body := map[string]any{"prompt": "p", "seconds": 5, "sound": true, "aspect_ratio": "16:9"}
+				if tc.model != "kling-v2-6" {
+					delete(body, "sound")
+				}
+				if imageInput {
+					body["image"] = "https://cdn.example/source.png"
+					delete(body, "aspect_ratio")
+				}
+				intent := callKie(t, plugin, "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{"model": tc.model, "body": map[string]any{"kind": "json", "value": body}})
+				ctx := map[string]any{"model": tc.model, "requestBody": intent["requestBody"], "baseUrl": "https://api.kie.example", "apiKey": "key"}
+				wire := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				want := tc.text
+				if imageInput {
+					want = tc.image
+				}
+				assert.Equal(t, want, wire["body"].(map[string]any)["model"])
+				facts := callKie(t, plugin, "extractUsage", nil, ctx)
+				assert.Equal(t, float64(5), facts["seconds"])
+				ctx["upstream"] = map[string]any{"kind": "new_api"}
+				forwarded := callKie(t, plugin, "buildSubmitRequest", nil, ctx)
+				assert.Equal(t, tc.model, forwarded["body"].(map[string]any)["model"])
+				native := callKie(t, plugin, "native", []string{"createTask"}, map[string]any{"model": tc.model, "body": map[string]any{"kind": "json", "value": forwarded["body"]}})
+				wire2 := callKie(t, plugin, "buildSubmitRequest", nil, map[string]any{"model": tc.model, "requestBody": native["requestBody"], "baseUrl": "https://api.kie.example", "apiKey": "key"})
+				assert.Equal(t, wire["body"], wire2["body"])
+			})
+		}
+	}
+}
